@@ -1,5 +1,5 @@
 use std::error::Error;
-use wapc::{ModuleState, WapcFunctions, WasiParams, WebAssemblyEngineProvider, HOST_NAMESPACE};
+use wapc::{ModuleState, WapcFunctions, WebAssemblyEngineProvider, HOST_NAMESPACE};
 use wasmtime::{Engine, Extern, ExternType, Func, Instance, Module, Store};
 
 use std::sync::Arc;
@@ -8,7 +8,6 @@ use std::sync::Arc;
 extern crate log;
 
 mod callbacks;
-mod modreg;
 
 macro_rules! call {
     ($func:expr, $($p:expr),*) => {
@@ -29,17 +28,15 @@ macro_rules! call {
 // #[derive(Clone)]
 pub struct WasmtimeEngineProvider {
     host: Option<Arc<ModuleState>>,
-    wasidata: Option<WasiParams>,
     modbytes: Vec<u8>,
 }
 
 impl WasmtimeEngineProvider {
     /// Creates a new instance of the wasmtime provider
-    pub fn new(buf: &[u8], wasi: Option<WasiParams>) -> WasmtimeEngineProvider {
+    pub fn new(buf: &[u8]) -> WasmtimeEngineProvider {
         WasmtimeEngineProvider {
             host: None,
             modbytes: buf.to_vec(),
-            wasidata: wasi,
         }
     }
 }
@@ -87,17 +84,6 @@ impl WasmtimeEngineProvider {
         let engine = Engine::default();
         let store = Store::new(&engine);
         let module = Module::new(&engine, &self.modbytes).unwrap();
-        // let d = WasiParams::default();
-        // let wasi = match &self.wasidata {
-        //     Some(w) => w,
-        //     None => &d,
-        // };
-        // Make wasi available by default.
-        // let preopen_dirs =
-        //     modreg::compute_preopen_dirs(&wasi.preopened_dirs, &wasi.map_dirs).unwrap();
-        // let argv = vec![]; // TODO: add support for argv (if applicable)
-        // let module_registry =
-        //     ModuleRegistry::new(&store, &preopen_dirs, &argv, &wasi.env_vars).unwrap();
         let imports = arrange_imports(&module, host, store.clone());
         let instance = wasmtime::Instance::new(&store, &module, imports?.as_slice()).unwrap();
         initialize(&instance)?;

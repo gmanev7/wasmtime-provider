@@ -19,7 +19,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     env_logger::init();
     let n = Instant::now();
     let module_bytes = load_file(&std::env::args().skip(1).next().unwrap());
-    let engine = WasmtimeEngineProvider::new(&module_bytes, None);
+    let engine = WasmtimeEngineProvider::new(&module_bytes);
 
     let host = WapcHost::new(Box::new(engine), host_callback)?;
 

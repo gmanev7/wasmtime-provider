@@ -2,12 +2,7 @@ use std::error::Error;
 use wapc::{ModuleState, WapcFunctions, WasiParams, WebAssemblyEngineProvider, HOST_NAMESPACE};
 use wasmtime::{Engine, Extern, ExternType, Func, Instance, Module, Store};
 
-// namespace needed for some language support
-const WASI_UNSTABLE_NAMESPACE: &str = "wasi_unstable";
-const WASI_SNAPSHOT_PREVIEW1_NAMESPACE: &str = "wasi_snapshot_preview1";
-
-use crate::modreg::ModuleRegistry;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 #[macro_use]
 extern crate log;
@@ -30,15 +25,10 @@ macro_rules! call {
     }
 }
 
-struct EngineInner {
-    instance: Arc<RwLock<Instance>>,
-    guest_call_fn: Func,
-    host: Arc<ModuleState>,
-}
-
 /// A waPC engine provider that encapsulates the Wasmtime WebAssembly runtime
+// #[derive(Clone)]
 pub struct WasmtimeEngineProvider {
-    inner: Option<EngineInner>,
+    host: Option<Arc<ModuleState>>,
     wasidata: Option<WasiParams>,
     modbytes: Vec<u8>,
 }
@@ -47,7 +37,7 @@ impl WasmtimeEngineProvider {
     /// Creates a new instance of the wasmtime provider
     pub fn new(buf: &[u8], wasi: Option<WasiParams>) -> WasmtimeEngineProvider {
         WasmtimeEngineProvider {
-            inner: None,
+            host: None,
             modbytes: buf.to_vec(),
             wasidata: wasi,
         }
@@ -56,92 +46,72 @@ impl WasmtimeEngineProvider {
 
 impl WebAssemblyEngineProvider for WasmtimeEngineProvider {
     fn init(&mut self, host: Arc<ModuleState>) -> Result<(), Box<dyn Error>> {
-        let instance = instance_from_buffer(&self.modbytes, &self.wasidata, host.clone())?;
-        let instance_ref = Arc::new(RwLock::new(instance));
-        let gc = guest_call_fn(instance_ref.clone())?;
-        self.inner = Some(EngineInner {
-            instance: instance_ref,
-            guest_call_fn: gc,
-            host,
-        });
-        self.initialize()?;
+        debug_assert!(!self.initialized());
+        self.host = Some(host);
         Ok(())
     }
 
     fn call(&mut self, op_length: i32, msg_length: i32) -> Result<i32, Box<dyn Error>> {
+        debug_assert!(self.initialized());
+        let instance = self.instantiate()?;
+        let guest_call_fn = guest_call_fn(&instance)?;
+
         // Note that during this call, the guest should, through the functions
         // it imports from the host, set the guest error and response
 
-        let callresult: i32 = call!(
-            self.inner.as_ref().unwrap().guest_call_fn,
-            op_length,
-            msg_length
-        );
+        let callresult: i32 = call!(guest_call_fn, op_length, msg_length);
 
         Ok(callresult)
     }
 
     fn replace(&mut self, module: &[u8]) -> Result<(), Box<dyn Error>> {
+        debug_assert!(self.initialized());
         info!(
             "HOT SWAP - Replacing existing WebAssembly module with new buffer, {} bytes",
             module.len()
         );
 
-        let new_instance = instance_from_buffer(
-            module,
-            &self.wasidata,
-            self.inner.as_ref().unwrap().host.clone(),
-        )?;
-        *self.inner.as_ref().unwrap().instance.write().unwrap() = new_instance;
-
-        self.initialize()
-    }
-}
-
-impl WasmtimeEngineProvider {
-    fn initialize(&self) -> Result<(), Box<dyn Error>> {
-        for starter in wapc::WapcFunctions::REQUIRED_STARTS.iter() {
-            if let Some(ext) = self
-                .inner
-                .as_ref()
-                .unwrap()
-                .instance
-                .read()
-                .unwrap()
-                .get_export(starter)
-            {
-                ext.into_func().unwrap().call(&[])?;
-            }
-        }
+        self.modbytes = module.to_vec();
         Ok(())
     }
 }
 
-fn instance_from_buffer(
-    buf: &[u8],
-    wasi: &Option<WasiParams>,
-    state: Arc<ModuleState>,
-) -> Result<Instance, Box<dyn Error>> {
-    let engine = Engine::default();
-    let store = Store::new(&engine);
-    let module = Module::new(&engine, buf).unwrap();
+impl WasmtimeEngineProvider {
+    fn initialized(&self) -> bool {
+        self.host.is_some()
+    }
 
-    let d = WasiParams::default();
-    let wasi = match wasi {
-        Some(w) => w,
-        None => &d,
-    };
+    fn instantiate(&self) -> Result<Instance, Box<dyn Error>> {
+        debug_assert!(self.initialized());
+        let host = self.host.as_ref().unwrap().clone();
+        let engine = Engine::default();
+        let store = Store::new(&engine);
+        let module = Module::new(&engine, &self.modbytes).unwrap();
+        // let d = WasiParams::default();
+        // let wasi = match &self.wasidata {
+        //     Some(w) => w,
+        //     None => &d,
+        // };
+        // Make wasi available by default.
+        // let preopen_dirs =
+        //     modreg::compute_preopen_dirs(&wasi.preopened_dirs, &wasi.map_dirs).unwrap();
+        // let argv = vec![]; // TODO: add support for argv (if applicable)
+        // let module_registry =
+        //     ModuleRegistry::new(&store, &preopen_dirs, &argv, &wasi.env_vars).unwrap();
+        let imports = arrange_imports(&module, host, store.clone());
+        let instance = wasmtime::Instance::new(&store, &module, imports?.as_slice()).unwrap();
+        initialize(&instance)?;
+        Ok(instance)
+    }
+}
 
-    // Make wasi available by default.
-    let preopen_dirs = modreg::compute_preopen_dirs(&wasi.preopened_dirs, &wasi.map_dirs).unwrap();
-    let argv = vec![]; // TODO: add support for argv (if applicable)
-
-    let module_registry =
-        ModuleRegistry::new(&store, &preopen_dirs, &argv, &wasi.env_vars).unwrap();
-
-    let imports = arrange_imports(&module, state, store.clone(), &module_registry);
-
-    Ok(wasmtime::Instance::new(&store, &module, imports?.as_slice()).unwrap())
+fn initialize(instance: &Instance) -> Result<(), Box<dyn Error>> {
+    for starter in wapc::WapcFunctions::REQUIRED_STARTS.iter() {
+        if let Some(ext) = instance.get_export(starter) {
+            ext.into_func().unwrap().call(&[])?;
+        }
+    }
+    Ok(())
 }
 
 /// wasmtime requires that the list of callbacks be "zippable" with the list
@@ -153,7 +123,6 @@ fn arrange_imports(
     module: &Module,
     host: Arc<ModuleState>,
     store: Store,
-    mod_registry: &ModuleRegistry,
 ) -> Result<Vec<Extern>, Box<dyn Error>> {
     Ok(module
         .imports()
@@ -162,26 +131,6 @@ fn arrange_imports(
                 match imp.module() {
                     HOST_NAMESPACE => {
                         Some(callback_for_import(imp.name(), host.clone(), store.clone()))
-                    }
-                    WASI_UNSTABLE_NAMESPACE => {
-                        let f = Extern::from(
-                            mod_registry
-                                .wasi_unstable
-                                .get_export(imp.name())
-                                .unwrap()
-                                .clone(),
-                        );
-                        Some(f)
-                    }
-                    WASI_SNAPSHOT_PREVIEW1_NAMESPACE => {
-                        let f: Extern = Extern::from(
-                            mod_registry
-                                .wasi_snapshot_preview1
-                                .get_export(imp.name())
-                                .unwrap()
-                                .clone(),
-                        );
-                        Some(f)
                     }
                     other => panic!("import module `{}` was not found", other), //TODO: get rid of panic
                 }
@@ -219,8 +168,8 @@ fn callback_for_import(import: &str, host: Arc<ModuleState>, store: Store) -> Ex
 
 // Called once, then the result is cached. This returns a `Func` that corresponds
 // to the `__guest_call` export
-fn guest_call_fn(instance: Arc<RwLock<Instance>>) -> Result<Func, Box<dyn Error>> {
-    if let Some(func) = instance.read().unwrap().get_func(WapcFunctions::GUEST_CALL) {
+fn guest_call_fn(instance: &Instance) -> Result<Func, Box<dyn Error>> {
+    if let Some(func) = instance.get_func(WapcFunctions::GUEST_CALL) {
         Ok(func)
     } else {
         Err("Guest module did not export __guest_call function!".into())

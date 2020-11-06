@@ -1,3 +1,4 @@
+use anyhow::Result;
 use std::error::Error;
 use wapc::{ModuleState, WapcFunctions, WebAssemblyEngineProvider, HOST_NAMESPACE};
 use wasmtime::{Engine, Extern, ExternType, Func, Instance, Module, Store};
@@ -32,14 +33,14 @@ pub struct WasmtimeEngineProvider {
 }
 
 impl WasmtimeEngineProvider {
-    pub fn new(buf: &[u8]) -> Result<Self, Box<dyn Error>> {
+    pub fn new(buf: &[u8]) -> Result<Self, Box<dyn Error + Send>> {
         Ok(WasmtimeEngineProvider {
             host: None,
             module: Self::load_module(buf)?,
         })
     }
 
-    fn load_module(buf: &[u8]) -> Result<Module, Box<dyn Error>> {
+    fn load_module(buf: &[u8]) -> Result<Module> {
         let engine = Engine::default();
         Ok(Module::new(&engine, buf)?)
     }

@@ -25,7 +25,7 @@ macro_rules! call {
 }
 
 /// A waPC engine provider that encapsulates the Wasmtime WebAssembly runtime
-// #[derive(Clone)]
+#[derive(Clone)]
 pub struct WasmtimeEngineProvider {
     host: Option<Arc<ModuleState>>,
     module: Module,

@@ -13,7 +13,7 @@ pub(crate) fn guest_request_func(store: &Store, host: Arc<ModuleState>) -> Func 
             let ptr = params[1].i32();
 
             let invocation = host.get_guest_request();
-            let memory = get_caller_memory(&caller).unwrap();
+            let memory = get_caller_memory(&caller);
             if let Some(inv) = invocation {
                 write_bytes_to_memory(memory.clone(), ptr.unwrap(), &inv.msg);
                 write_bytes_to_memory(memory, op_ptr.unwrap(), &inv.operation.as_bytes());
@@ -32,7 +32,7 @@ pub(crate) fn console_log_func(store: &Store, host: Arc<ModuleState>) -> Func {
         move |caller, params: &[Val], _results: &mut [Val]| {
             let ptr = params[0].i32();
             let len = params[1].i32();
-            let memory = get_caller_memory(&caller).unwrap();
+            let memory = get_caller_memory(&caller);
             let vec = get_vec_from_memory(memory, ptr.unwrap(), len.unwrap());
 
             let msg = std::str::from_utf8(&vec).unwrap();
@@ -67,7 +67,7 @@ pub(crate) fn host_call_func(store: &Store, host: Arc<ModuleState>) -> Func {
                 state.host_error = None;
                 state.id
             }; */
-            let memory = get_caller_memory(&caller).unwrap();
+            let memory = get_caller_memory(&caller);
 
             let bd_ptr = params[0].i32();
             let bd_len = params[1].i32();
@@ -102,7 +102,7 @@ pub(crate) fn host_response_func(store: &Store, host: Arc<ModuleState>) -> Func 
         callback_type,
         move |caller: Caller, params: &[Val], _results: &mut [Val]| {
             if let Some(ref e) = host.get_host_response() {
-                let memory = get_caller_memory(&caller).unwrap();
+                let memory = get_caller_memory(&caller);
                 let ptr = params[0].i32();
                 write_bytes_to_memory(memory, ptr.unwrap(), &e);
             }
@@ -135,7 +135,7 @@ pub(crate) fn guest_response_func(store: &Store, host: Arc<ModuleState>) -> Func
         move |caller: Caller, params: &[Val], _results: &mut [Val]| {
             let ptr = params[0].i32();
             let len = params[1].i32();
-            let memory = get_caller_memory(&caller).unwrap();
+            let memory = get_caller_memory(&caller);
             let vec = get_vec_from_memory(memory, ptr.unwrap(), len.unwrap());
             host.set_guest_response(vec);
             Ok(())
@@ -149,7 +149,7 @@ pub(crate) fn guest_error_func(store: &Store, host: Arc<ModuleState>) -> Func {
         store,
         callback_type,
         move |caller: Caller, params: &[Val], _results: &mut [Val]| {
-            let memory = get_caller_memory(&caller).unwrap();
+            let memory = get_caller_memory(&caller);
             let ptr = params[0].i32();
             let len = params[1].i32();
 
@@ -168,7 +168,7 @@ pub(crate) fn host_error_func(store: &Store, host: Arc<ModuleState>) -> Func {
         move |caller: Caller, params: &[Val], _results: &mut [Val]| {
             if let Some(ref e) = host.get_host_error() {
                 let ptr = params[0].i32();
-                let memory = get_caller_memory(&caller).unwrap();
+                let memory = get_caller_memory(&caller);
                 write_bytes_to_memory(memory, ptr.unwrap(), e.as_bytes());
             }
             Ok(())
@@ -191,11 +191,11 @@ pub(crate) fn host_error_len_func(store: &Store, host: Arc<ModuleState>) -> Func
     )
 }
 
-fn get_caller_memory(caller: &Caller) -> Result<Memory, anyhow::Error> {
+fn get_caller_memory(caller: &Caller) -> Memory {
     let memory = caller
         .get_export("memory")
         .map(|e| e.into_memory().unwrap());
-    Ok(memory.unwrap())
+    memory.unwrap()
 }
 
 fn get_vec_from_memory(mem: Memory, ptr: i32, len: i32) -> Vec<u8> {

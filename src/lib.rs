@@ -28,22 +28,25 @@ macro_rules! call {
 // #[derive(Clone)]
 pub struct WasmtimeEngineProvider {
     host: Option<Arc<ModuleState>>,
-    modbytes: Vec<u8>,
+    module: Module,
 }
 
 impl WasmtimeEngineProvider {
-    /// Creates a new instance of the wasmtime provider
-    pub fn new(buf: &[u8]) -> WasmtimeEngineProvider {
-        WasmtimeEngineProvider {
+    pub fn new(buf: &[u8]) -> Result<Self, Box<dyn Error>> {
+        Ok(WasmtimeEngineProvider {
             host: None,
-            modbytes: buf.to_vec(),
-        }
+            module: Self::load_module(buf)?,
+        })
+    }
+
+    fn load_module(buf: &[u8]) -> Result<Module, Box<dyn Error>> {
+        let engine = Engine::default();
+        Ok(Module::new(&engine, buf)?)
     }
 }
 
 impl WebAssemblyEngineProvider for WasmtimeEngineProvider {
     fn init(&mut self, host: Arc<ModuleState>) -> Result<(), Box<dyn Error>> {
-        debug_assert!(!self.initialized());
         self.host = Some(host);
         Ok(())
     }
@@ -61,14 +64,14 @@ impl WebAssemblyEngineProvider for WasmtimeEngineProvider {
         Ok(callresult)
     }
 
-    fn replace(&mut self, module: &[u8]) -> Result<(), Box<dyn Error>> {
+    fn replace(&mut self, buf: &[u8]) -> Result<(), Box<dyn Error>> {
         debug_assert!(self.initialized());
         info!(
             "HOT SWAP - Replacing existing WebAssembly module with new buffer, {} bytes",
-            module.len()
+            buf.len()
         );
 
-        self.modbytes = module.to_vec();
+        self.module = Self::load_module(buf)?;
         Ok(())
     }
 }
@@ -81,11 +84,10 @@ impl WasmtimeEngineProvider {
     fn instantiate(&self) -> Result<Instance, Box<dyn Error>> {
         debug_assert!(self.initialized());
         let host = self.host.as_ref().unwrap().clone();
-        let engine = Engine::default();
-        let store = Store::new(&engine);
-        let module = Module::new(&engine, &self.modbytes).unwrap();
-        let imports = arrange_imports(&module, host, store.clone());
-        let instance = wasmtime::Instance::new(&store, &module, imports?.as_slice()).unwrap();
+        let engine = self.module.engine();
+        let store = Store::new(engine);
+        let imports = arrange_imports(&self.module, host, store.clone());
+        let instance = wasmtime::Instance::new(&store, &self.module, imports?.as_slice())?;
         initialize(&instance)?;
         Ok(instance)
     }

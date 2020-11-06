@@ -15,11 +15,11 @@ fn load_file(path: &str) -> Vec<u8> {
     buf
 }
 
-pub fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     let n = Instant::now();
     let module_bytes = load_file(&std::env::args().skip(1).next().unwrap());
-    let engine = WasmtimeEngineProvider::new(&module_bytes);
+    let engine = WasmtimeEngineProvider::new(&module_bytes)?;
 
     let host = WapcHost::new(Box::new(engine), host_callback)?;
 

@@ -1,7 +1,8 @@
 [package]
 name = "wasmtime-provider"
 version = "0.0.3"
-authors = ["Kevin Hoffman <alothien@gmail.com>"]
+authors = ["Kevin Hoffman <alothien@gmail.com>",
+             "Gancho Manev <gmanev@designer.bg>"]
 edition = "2018"
 exclude = [".assets"]
 description = "A wasmtime engine provider for the waPC host"
